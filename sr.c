@@ -208,8 +208,8 @@ void A_init(void)
 
 /********* Receiver (B)  variables and procedures ************/
 
-static struct pkt B_buffer[WINDOWSIZE];  /* array for storing received packets */
-static int B_recv[WINDOWSIZE];          /* array flags of whether packet received or not */
+static struct pkt B_buffer[SEQSPACE];  /* array for storing received packets */
+static int B_recv[SEQSPACE];          /* array flags of whether packet received or not */
 static int B_windowfirst;    /* array indexes of the first/last packet */
 static int expectedseqnum; /* the sequence number expected next by the receiver */
 static int B_nextseqnum;   /* the sequence number for the next packets sent by B */
@@ -220,70 +220,62 @@ void B_input(struct pkt packet)
 {
   struct pkt sendpkt;
   int i;
-  int windowidx;
 
-  /* printf("-----B: packet seq %d %d\n", packet.seqnum, expectedseqnum); */
+  // 1. 判断该包是否在接收窗口范围内（考虑 wrap-around）
+  bool in_window = false;
+  int upper = (expectedseqnum + WINDOWSIZE) % SEQSPACE;
+  
+  // 窗口未绕圈：如 [2,3,4,5,6,7]
+  if (expectedseqnum < upper)
+      in_window = (packet.seqnum >= expectedseqnum && packet.seqnum < upper);
+  // 窗口绕圈：如 [6,0,1,2,3,4]
+  else
+      in_window = (packet.seqnum >= expectedseqnum || packet.seqnum < upper);
 
-  /* if not corrupted and received packet is in WINDOWS */
-  if (!IsCorrupted(packet)) {
-    if (TRACE > 0)
-      printf("----B: packet %d is correctly received, send ACK!\n",packet.seqnum);
-    packets_received++;
+  // 2. 如果包未损坏且在窗口范围内，接收、缓存、交付
+  if (!IsCorrupted(packet) && in_window) {
+    // 如果是第一次收到该包
+    if (!B_recv[packet.seqnum]) {
+      B_buffer[packet.seqnum] = packet;     // 缓存该包
+      B_recv[packet.seqnum] = 1;            // 标记为已收到
+      packets_received++;                   // 记录统计（用于 trace 检查）
 
-    for (i = 0; i < WINDOWSIZE; i++) {
-        if (B_buffer[i].checksum == packet.checksum) {
-            break;
-        }
+      if (TRACE > 0)
+        printf("----B: Buffered new packet %d\n", packet.seqnum);
     }
-    /* printf("window index %d\n", windowidx); */
-    if (i >= WINDOWSIZE) {
-        if (packet.seqnum >= expectedseqnum) {
-            windowidx = (B_windowfirst + packet.seqnum - expectedseqnum)%WINDOWSIZE;
-        } else {
-            windowidx = (B_windowfirst + SEQSPACE - expectedseqnum + packet.seqnum)%WINDOWSIZE;
-        }
 
-        B_buffer[windowidx] = packet;
-        B_recv[windowidx] = 1;
-        while (B_recv[B_windowfirst]) {
-            /* deliver to receiving application */
-            tolayer5(B, B_buffer[B_windowfirst].payload);
-
-            B_recv[B_windowfirst] = 0;
-
-            /* update state variables */
-            expectedseqnum = (expectedseqnum + 1) % SEQSPACE;        
-
-            B_windowfirst = (B_windowfirst + 1) % WINDOWSIZE;
-        }
-
-        /* send an ACK for the received packet */
-        sendpkt.acknum = packet.seqnum;
+    // 3. 持续从 expectedseqnum 开始，把按序包交给 layer5
+    while (B_recv[expectedseqnum]) {
+      tolayer5(B, B_buffer[expectedseqnum].payload); // 送到上层
+      B_recv[expectedseqnum] = 0;                    // 清空接收标志位
+      expectedseqnum = (expectedseqnum + 1) % SEQSPACE; // 滑动窗口
     }
+
+    // 构造 ACK，确认该包
+    sendpkt.acknum = packet.seqnum;
   }
+
+  // 4. 如果包损坏或不在窗口范围，发上一个有效 ACK
   else {
-    /* packet is corrupted */
-    if (TRACE > 0) 
-      printf("----B: packet corrupted or duplicated, resend ACK!\n");
-    if (expectedseqnum == 0)
-      sendpkt.acknum = SEQSPACE - 1;
-    else
-      sendpkt.acknum = expectedseqnum - 1;
+    if (TRACE > 0)
+      printf("----B: Packet corrupted or out-of-window, resend last ACK\n");
+
+    // 上一个正确的 ACK 是 (expectedseqnum - 1) mod SEQSPACE
+    sendpkt.acknum = (expectedseqnum + SEQSPACE - 1) % SEQSPACE;
   }
 
-  /* create packet */
+  //5. 构造 ACK 包并发送
   sendpkt.seqnum = B_nextseqnum;
   B_nextseqnum = (B_nextseqnum + 1) % 2;
-    
-  /* we don't have any data to send.  fill payload with 0's */
-  for ( i=0; i<20 ; i++ ) 
-    sendpkt.payload[i] = '0';  
 
-  /* computer checksum */
-  sendpkt.checksum = ComputeChecksum(sendpkt); 
+  for (i = 0; i < 20; i++)
+    sendpkt.payload[i] = '0';
 
-  /* send out packet */
-  tolayer3 (B, sendpkt);
+  sendpkt.checksum = ComputeChecksum(sendpkt);
+  tolayer3(B, sendpkt);
+
+  if (TRACE > 0)
+    printf("----B: Sent ACK %d\n", sendpkt.acknum);
 }
 
 /* the following routine will be called once (only) before any other */
@@ -291,9 +283,11 @@ void B_input(struct pkt packet)
 void B_init(void)
 {
   B_windowfirst = 0;
-
   expectedseqnum = 0;
   B_nextseqnum = 1;
+
+  for (int i = 0; i < SEQSPACE; i++)
+    B_recv[i] = 0;
 }
 
 /******************************************************************************
