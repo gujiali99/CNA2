@@ -260,7 +260,7 @@ void B_input(struct pkt packet)
   else {
     /* packet is corrupted */
     if (TRACE > 0) 
-      printf("----B: packet corrupted or duplicated, resend ACK!\n");
+      printf("----B: packet corrupted or duplicated, resend ACK! %d %d %d %d\n", packet.seqnum, expectedseqnum, SEQSPACE, WINDOWSIZE);
     if (expectedseqnum == 0)
       sendpkt.acknum = SEQSPACE - 1;
     else
