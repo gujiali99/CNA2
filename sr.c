@@ -224,15 +224,8 @@ void B_input(struct pkt packet)
 
   /* printf("-----B: packet seq %d %d\n", packet.seqnum, expectedseqnum); */
 
-    if (TRACE > 0) {
-        printf("----B:  %d %d %d %d\n", packet.seqnum, expectedseqnum, SEQSPACE, WINDOWSIZE);
-        printf("----B:  %d\n", B_windowfirst);
-    }
-
   /* if not corrupted and received packet is in WINDOWS */
-  if ((!IsCorrupted(packet)) &&
-       (((packet.seqnum >= expectedseqnum) && (packet.seqnum - expectedseqnum) < WINDOWSIZE) ||
-        ((packet.seqnum < expectedseqnum) && (SEQSPACE - expectedseqnum + packet.seqnum) < WINDOWSIZE))) {
+  if (!IsCorrupted(packet)) {
     if (TRACE > 0)
       printf("----B: packet %d is correctly received, send ACK!\n",packet.seqnum);
     packets_received++;
