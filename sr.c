@@ -5,8 +5,6 @@
 #include "gbn.h"
 
 /* ******************************************************************
-  Selective Repeat protocol - based on existing Go-Back-N implementation
-
    Go Back N protocol.  Adapted from J.F.Kurose
    ALTERNATING BIT AND GO-BACK-N NETWORK EMULATOR: VERSION 1.2  
 
@@ -115,9 +113,6 @@ void A_output(struct msg message)
 */
 void A_input(struct pkt packet)
 {
-  int ackcount = 0;
-  int i;
-
   /* if received ACK is not corrupted */ 
   if (!IsCorrupted(packet)) {
     if (TRACE > 0)
@@ -133,9 +128,9 @@ void A_input(struct pkt packet)
               ((seqfirst > seqlast) && (packet.acknum >= seqfirst || packet.acknum <= seqlast))) {
             int windowidx;
             if (packet.acknum >= seqfirst) {
-                windowidx = packet.acknum - seqfirst;
+                windowidx = windowfirst + packet.acknum - seqfirst;
             } else {
-                windowidx = SEQSPACE - seqfirst + packet.acknum;
+                windowidx = windowfirst + SEQSPACE - seqfirst + packet.acknum;
             }
             if (!acked[windowidx]) {
                 /* packet is a new ACK */
@@ -177,7 +172,7 @@ void A_timerinterrupt(void)
     printf("----A: time out,resend packets!\n");
 
   for(i=0; i<windowcount; i++) {
-    if (acked[i]) {
+    if (acked[(windowfirst+i)%WINDOWSIZE]) {
         continue;
     }
     if (TRACE > 0)
@@ -188,8 +183,6 @@ void A_timerinterrupt(void)
     if (i==0) starttimer(A,RTT);
   }
 }       
-
-
 
 /* the following routine will be called once (only) before any other */
 /* entity A routines are called. You can use it to do any initialization */
@@ -209,6 +202,9 @@ void A_init(void)
 
 /********* Receiver (B)  variables and procedures ************/
 
+static struct pkt B_buffer[WINDOWSIZE];  /* array for storing received packets */
+static int B_recv[WINDOWSIZE];          /* array flags of whether packet received or not */
+static int B_windowfirst;    /* array indexes of the first/last packet */
 static int expectedseqnum; /* the sequence number expected next by the receiver */
 static int B_nextseqnum;   /* the sequence number for the next packets sent by B */
 
@@ -218,26 +214,43 @@ void B_input(struct pkt packet)
 {
   struct pkt sendpkt;
   int i;
+  int windowidx;
 
-  /* if not corrupted and received packet is in order */
-  if  ( (!IsCorrupted(packet))) {
+  /* if not corrupted and received packet is in WINDOWS */
+  if ((!IsCorrupted(packet)) &&
+       ((packet.seqnum >= B_nextseqnum) && (packet.seqnum - B_nextseqnum) < WINDOWSIZE) &&
+       ((packet.seqnum < B_nextseqnum) && (SEQSPACE - B_nextseqnum + packet.seqnum) < WINDOWSIZE)) {
     if (TRACE > 0)
       printf("----B: packet %d is correctly received, send ACK!\n",packet.seqnum);
     packets_received++;
 
-    /* deliver to receiving application */
-    tolayer5(B, packet.payload);
+    if (packet.seqnum >= B_nextseqnum) {
+        windowidx = B_windowfirst + packet.seqnum - B_nextseqnum;
+    } else {
+        windowidx = B_windowfirst + SEQSPACE - B_nextseqnum + packet.seqnum;
+    }
+    B_buffer[windowidx] = packet;
+    B_recv[windowidx] = 1;
+
+    while (B_recv[B_windowfirst]) {
+        /* deliver to receiving application */
+        tolayer5(B, B_buffer[B_windowfirst].payload);
+
+        B_recv[B_windowfirst] = 0;
+
+        /* update state variables */
+        expectedseqnum = (expectedseqnum + 1) % SEQSPACE;        
+
+        B_windowfirst = (B_windowfirst + 1) % WINDOWSIZE;
+    }
 
     /* send an ACK for the received packet */
     sendpkt.acknum = packet.seqnum;
-
-    /* update state variables */
-    expectedseqnum = (expectedseqnum + 1) % SEQSPACE;        
   }
   else {
-    /* packet is corrupted or out of order resend last ACK */
+    /* packet is corrupted */
     if (TRACE > 0) 
-      printf("----B: packet corrupted or not expected sequence number, resend ACK!\n");
+      printf("----B: packet corrupted or duplicated, resend ACK!\n");
     if (expectedseqnum == 0)
       sendpkt.acknum = SEQSPACE - 1;
     else
@@ -263,6 +276,8 @@ void B_input(struct pkt packet)
 /* entity B routines are called. You can use it to do any initialization */
 void B_init(void)
 {
+  B_windowfirst = 0;
+
   expectedseqnum = 0;
   B_nextseqnum = 1;
 }
