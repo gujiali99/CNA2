@@ -241,8 +241,6 @@ void B_input(struct pkt packet)
 
     while (B_recv[B_windowfirst]) {
         /* deliver to receiving application */
-        if (TRACE > 0)
-            printf("-----B: deliver seq %d\n", B_buffer[B_windowfirst].seqnum);
         tolayer5(B, B_buffer[B_windowfirst].payload);
 
         B_recv[B_windowfirst] = 0;
