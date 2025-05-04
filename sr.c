@@ -230,29 +230,36 @@ void B_input(struct pkt packet)
       printf("----B: packet %d is correctly received, send ACK!\n",packet.seqnum);
     packets_received++;
 
-    if (packet.seqnum >= expectedseqnum) {
-        windowidx = (B_windowfirst + packet.seqnum - expectedseqnum)%WINDOWSIZE;
-    } else {
-        windowidx = (B_windowfirst + SEQSPACE - expectedseqnum + packet.seqnum)%WINDOWSIZE;
+    for (i = 0; i < WINDOWSIZE; i++) {
+        if (B_buffer[i].checksum == packet.checksum) {
+            break;
+        }
     }
     /* printf("window index %d\n", windowidx); */
-    B_buffer[windowidx] = packet;
-    B_recv[windowidx] = 1;
+    if (i >= WINDOWSIZE) {
+        if (packet.seqnum >= expectedseqnum) {
+            windowidx = (B_windowfirst + packet.seqnum - expectedseqnum)%WINDOWSIZE;
+        } else {
+            windowidx = (B_windowfirst + SEQSPACE - expectedseqnum + packet.seqnum)%WINDOWSIZE;
+        }
 
-    while (B_recv[B_windowfirst]) {
-        /* deliver to receiving application */
-        tolayer5(B, B_buffer[B_windowfirst].payload);
+        B_buffer[windowidx] = packet;
+        B_recv[windowidx] = 1;
+        while (B_recv[B_windowfirst]) {
+            /* deliver to receiving application */
+            tolayer5(B, B_buffer[B_windowfirst].payload);
 
-        B_recv[B_windowfirst] = 0;
+            B_recv[B_windowfirst] = 0;
 
-        /* update state variables */
-        expectedseqnum = (expectedseqnum + 1) % SEQSPACE;        
+            /* update state variables */
+            expectedseqnum = (expectedseqnum + 1) % SEQSPACE;        
 
-        B_windowfirst = (B_windowfirst + 1) % WINDOWSIZE;
+            B_windowfirst = (B_windowfirst + 1) % WINDOWSIZE;
+        }
+
+        /* send an ACK for the received packet */
+        sendpkt.acknum = packet.seqnum;
     }
-
-    /* send an ACK for the received packet */
-    sendpkt.acknum = packet.seqnum;
   }
   else {
     /* packet is corrupted */
