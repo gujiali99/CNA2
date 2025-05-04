@@ -224,6 +224,11 @@ void B_input(struct pkt packet)
 
   /* printf("-----B: packet seq %d %d\n", packet.seqnum, expectedseqnum); */
 
+    if (TRACE > 0) {
+        printf("----B:  %d %d %d %d\n", packet.seqnum, expectedseqnum, SEQSPACE, WINDOWSIZE);
+        printf("----B:  %d\n", B_windowfirst);
+    }
+
   /* if not corrupted and received packet is in WINDOWS */
   if ((!IsCorrupted(packet)) &&
        (((packet.seqnum >= expectedseqnum) && (packet.seqnum - expectedseqnum) < WINDOWSIZE) ||
@@ -243,7 +248,8 @@ void B_input(struct pkt packet)
 
     while (B_recv[B_windowfirst]) {
         /* deliver to receiving application */
-        /* printf("-----B: deliver seq %d\n", B_buffer[B_windowfirst].seqnum); */
+        if (TRACE > 0)
+            printf("-----B: deliver seq %d\n", B_buffer[B_windowfirst].seqnum);
         tolayer5(B, B_buffer[B_windowfirst].payload);
 
         B_recv[B_windowfirst] = 0;
@@ -260,7 +266,7 @@ void B_input(struct pkt packet)
   else {
     /* packet is corrupted */
     if (TRACE > 0) 
-      printf("----B: packet corrupted or duplicated, resend ACK! %d %d %d %d\n", packet.seqnum, expectedseqnum, SEQSPACE, WINDOWSIZE);
+      printf("----B: packet corrupted or duplicated, resend ACK!\n");
     if (expectedseqnum == 0)
       sendpkt.acknum = SEQSPACE - 1;
     else
