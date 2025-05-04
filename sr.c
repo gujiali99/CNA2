@@ -221,43 +221,40 @@ void B_input(struct pkt packet)
   struct pkt sendpkt;
   int i;
 
-
-  bool in_window = false;
+  /* 判断是否在接收窗口范围内（考虑序号环绕） */
   int upper = (expectedseqnum + WINDOWSIZE) % SEQSPACE;
-
+  int in_window = 0;
   if (expectedseqnum < upper)
-      in_window = (packet.seqnum >= expectedseqnum && packet.seqnum < upper);
+    in_window = (packet.seqnum >= expectedseqnum && packet.seqnum < upper);
   else
-      in_window = (packet.seqnum >= expectedseqnum || packet.seqnum < upper);
-
+    in_window = (packet.seqnum >= expectedseqnum || packet.seqnum < upper);
 
   if (!IsCorrupted(packet) && in_window) {
     if (!B_recv[packet.seqnum]) {
-      printf("----B: packet %d is correctly received, send ACK!\n", packet.seqnum);
-
+      /* 新包：缓存并标记为已收到 */
       B_buffer[packet.seqnum] = packet;
       B_recv[packet.seqnum] = 1;
       packets_received++;
+
+      if (TRACE > 0)
+        printf("----B: packet %d is correctly received, send ACK!\n", packet.seqnum);
     }
 
-
+    /* 连续从 expectedseqnum 开始交付包 */
     while (B_recv[expectedseqnum]) {
       tolayer5(B, B_buffer[expectedseqnum].payload);
       B_recv[expectedseqnum] = 0;
       expectedseqnum = (expectedseqnum + 1) % SEQSPACE;
     }
 
-
+    /* 发送 cumulative ACK */
     sendpkt.acknum = (expectedseqnum + SEQSPACE - 1) % SEQSPACE;
-  }
-
-  else {
+  } else {
     if (TRACE > 0)
       printf("----B: Packet corrupted or out of window, resend last ACK!\n");
 
     sendpkt.acknum = (expectedseqnum + SEQSPACE - 1) % SEQSPACE;
   }
-
 
   sendpkt.seqnum = B_nextseqnum;
   B_nextseqnum = (B_nextseqnum + 1) % 2;
@@ -277,11 +274,11 @@ void B_input(struct pkt packet)
 /* entity B routines are called. You can use it to do any initialization */
 void B_init(void)
 {
+  int i;
   B_windowfirst = 0;
   expectedseqnum = 0;
   B_nextseqnum = 1;
 
-  int i;
   for (i = 0; i < SEQSPACE; i++)
     B_recv[i] = 0;
 }
