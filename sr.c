@@ -208,8 +208,8 @@ void A_init(void)
 
 /********* Receiver (B)  variables and procedures ************/
 
-static struct pkt B_buffer[SEQSPACE];  /* array for storing received packets */
-static int B_recv[SEQSPACE];          /* array flags of whether packet received or not */
+static struct pkt B_buffer[WINDOWSIZE];  /* array for storing received packets */
+static int B_recv[WINDOWSIZE];          /* array flags of whether packet received or not */
 static int B_windowfirst;    /* array indexes of the first/last packet */
 static int expectedseqnum; /* the sequence number expected next by the receiver */
 static int B_nextseqnum;   /* the sequence number for the next packets sent by B */
@@ -220,67 +220,80 @@ void B_input(struct pkt packet)
 {
   struct pkt sendpkt;
   int i;
+  int windowidx;
 
-  /* 判断是否在接收窗口范围内（考虑序号环绕） */
-  int upper = (expectedseqnum + WINDOWSIZE) % SEQSPACE;
-  int in_window = 0;
-  if (expectedseqnum < upper)
-    in_window = (packet.seqnum >= expectedseqnum && packet.seqnum < upper);
-  else
-    in_window = (packet.seqnum >= expectedseqnum || packet.seqnum < upper);
+  /* printf("-----B: packet seq %d %d\n", packet.seqnum, expectedseqnum); */
 
-  if (!IsCorrupted(packet) && in_window) {
-    if (!B_recv[packet.seqnum]) {
-      /* 新包：缓存并标记为已收到 */
-      B_buffer[packet.seqnum] = packet;
-      B_recv[packet.seqnum] = 1;
-      packets_received++;
-
-      if (TRACE > 0)
-        printf("----B: packet %d is correctly received, send ACK!\n", packet.seqnum);
-    }
-
-    /* 连续从 expectedseqnum 开始交付包 */
-    while (B_recv[expectedseqnum]) {
-      tolayer5(B, B_buffer[expectedseqnum].payload);
-      B_recv[expectedseqnum] = 0;
-      expectedseqnum = (expectedseqnum + 1) % SEQSPACE;
-    }
-
-    /* 发送 cumulative ACK */
-    sendpkt.acknum = (expectedseqnum + SEQSPACE - 1) % SEQSPACE;
-  } else {
+  /* if not corrupted and received packet is in WINDOWS */
+  if (!IsCorrupted(packet)) {
     if (TRACE > 0)
-      printf("----B: Packet corrupted or out of window, resend last ACK!\n");
+      printf("----B: packet %d is correctly received, send ACK!\n",packet.seqnum);
+    packets_received++;
 
-    sendpkt.acknum = (expectedseqnum + SEQSPACE - 1) % SEQSPACE;
+    for (i = 0; i < WINDOWSIZE; i++) {
+        if (B_buffer[i].checksum == packet.checksum) {
+            break;
+        }
+    }
+    /* printf("window index %d\n", windowidx); */
+    if (i >= WINDOWSIZE) {
+        if (packet.seqnum >= expectedseqnum) {
+            windowidx = (B_windowfirst + packet.seqnum - expectedseqnum)%WINDOWSIZE;
+        } else {
+            windowidx = (B_windowfirst + SEQSPACE - expectedseqnum + packet.seqnum)%WINDOWSIZE;
+        }
+
+        B_buffer[windowidx] = packet;
+        B_recv[windowidx] = 1;
+        while (B_recv[B_windowfirst]) {
+            /* deliver to receiving application */
+            tolayer5(B, B_buffer[B_windowfirst].payload);
+
+            B_recv[B_windowfirst] = 0;
+
+            /* update state variables */
+            expectedseqnum = (expectedseqnum + 1) % SEQSPACE;        
+
+            B_windowfirst = (B_windowfirst + 1) % WINDOWSIZE;
+        }
+
+    }
+    /* send an ACK for the received packet */
+    sendpkt.acknum = packet.seqnum;
+  }
+  else {
+    /* packet is corrupted */
+    if (TRACE > 0) 
+      printf("----B: packet corrupted or duplicated, resend ACK!\n");
+    if (expectedseqnum == 0)
+      sendpkt.acknum = SEQSPACE - 1;
+    else
+      sendpkt.acknum = expectedseqnum - 1;
   }
 
+  /* create packet */
   sendpkt.seqnum = B_nextseqnum;
   B_nextseqnum = (B_nextseqnum + 1) % 2;
+    
+  /* we don't have any data to send.  fill payload with 0's */
+  for ( i=0; i<20 ; i++ ) 
+    sendpkt.payload[i] = '0';  
 
-  for (i = 0; i < 20; i++)
-    sendpkt.payload[i] = '0';
+  /* computer checksum */
+  sendpkt.checksum = ComputeChecksum(sendpkt); 
 
-  sendpkt.checksum = ComputeChecksum(sendpkt);
-  tolayer3(B, sendpkt);
-
-  if (TRACE > 0)
-    printf("----B: Sent ACK %d\n", sendpkt.acknum);
+  /* send out packet */
+  tolayer3 (B, sendpkt);
 }
-
 
 /* the following routine will be called once (only) before any other */
 /* entity B routines are called. You can use it to do any initialization */
 void B_init(void)
 {
-  int i;
   B_windowfirst = 0;
+
   expectedseqnum = 0;
   B_nextseqnum = 1;
-
-  for (i = 0; i < SEQSPACE; i++)
-    B_recv[i] = 0;
 }
 
 /******************************************************************************
