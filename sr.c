@@ -221,7 +221,7 @@ void B_input(struct pkt packet)
   struct pkt sendpkt;
   int i;
 
-  // ===== 判断是否在接收窗口范围内（考虑序号环绕） =====
+
   bool in_window = false;
   int upper = (expectedseqnum + WINDOWSIZE) % SEQSPACE;
 
@@ -230,26 +230,27 @@ void B_input(struct pkt packet)
   else
       in_window = (packet.seqnum >= expectedseqnum || packet.seqnum < upper);
 
-  // ===== 如果包没损坏且在窗口内 =====
+
   if (!IsCorrupted(packet) && in_window) {
     if (!B_recv[packet.seqnum]) {
-      // 新包：缓存并标记为已收到
+      printf("----B: packet %d is correctly received, send ACK!\n", packet.seqnum);
+
       B_buffer[packet.seqnum] = packet;
       B_recv[packet.seqnum] = 1;
       packets_received++;
     }
 
-    // ===== 尝试从 expectedseqnum 开始交付连续包 =====
+
     while (B_recv[expectedseqnum]) {
       tolayer5(B, B_buffer[expectedseqnum].payload);
       B_recv[expectedseqnum] = 0;
       expectedseqnum = (expectedseqnum + 1) % SEQSPACE;
     }
 
-    // 发送 cumulative ACK：确认当前已按序交付的最后一个包
+
     sendpkt.acknum = (expectedseqnum + SEQSPACE - 1) % SEQSPACE;
   }
-  // ===== 包损坏或不在窗口内，回复上次有效 ACK =====
+
   else {
     if (TRACE > 0)
       printf("----B: Packet corrupted or out of window, resend last ACK!\n");
@@ -257,7 +258,7 @@ void B_input(struct pkt packet)
     sendpkt.acknum = (expectedseqnum + SEQSPACE - 1) % SEQSPACE;
   }
 
-  // ===== 构造 ACK 包并发送 =====
+
   sendpkt.seqnum = B_nextseqnum;
   B_nextseqnum = (B_nextseqnum + 1) % 2;
 
@@ -280,7 +281,8 @@ void B_init(void)
   expectedseqnum = 0;
   B_nextseqnum = 1;
 
-  for (int i = 0; i < SEQSPACE; i++)
+  int i;
+  for (i = 0; i < SEQSPACE; i++)
     B_recv[i] = 0;
 }
 
