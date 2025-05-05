@@ -267,13 +267,16 @@ void B_input(struct pkt packet)
     sendpkt.acknum = packet.seqnum;
   }
   else {
+    return;
     /* packet is corrupted */
+    /*
     if (TRACE > 0) 
       printf("----B: packet corrupted or duplicated, resend ACK!\n");
     if (expectedseqnum == 0)
       sendpkt.acknum = SEQSPACE - 1;
     else
       sendpkt.acknum = expectedseqnum - 1;
+    */
   }
 
   /* create packet */
