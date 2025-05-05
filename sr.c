@@ -24,7 +24,7 @@
 
 #define RTT  16.0       /* round trip time.  MUST BE SET TO 16.0 when submitting assignment */
 #define WINDOWSIZE 6    /* the maximum number of buffered unacked packet */
-#define SEQSPACE 7      /* the min sequence space for GBN must be at least windowsize + 1 */
+#define SEQSPACE 12      /* the min sequence space for SR must be at least 2*windowsize */
 #define NOTINUSE (-1)   /* used to fill header fields that are not being used */
 
 /* generic procedure to compute the checksum of a packet.  Used by both sender and receiver  
@@ -128,15 +128,17 @@ void A_input(struct pkt packet)
           if (((seqfirst <= seqlast) && (packet.acknum >= seqfirst && packet.acknum <= seqlast)) ||
               ((seqfirst > seqlast) && (packet.acknum >= seqfirst || packet.acknum <= seqlast))) {
             int windowidx;
+
+            /* packet is a new ACK */
+            if (TRACE > 0)
+                printf("----A: ACK %d is not a duplicate\n",packet.acknum);
+
             if (packet.acknum >= seqfirst) {
                 windowidx = (windowfirst + packet.acknum - seqfirst)%WINDOWSIZE;
             } else {
                 windowidx = (windowfirst + SEQSPACE - seqfirst + packet.acknum)%WINDOWSIZE;
             }
             if (!acked[windowidx]) {
-                /* packet is a new ACK */
-                if (TRACE > 0)
-                printf("----A: ACK %d is not a duplicate\n",packet.acknum);
                 new_ACKs++;
                 
                 acked[windowidx] = 1;
@@ -150,12 +152,10 @@ void A_input(struct pkt packet)
                     }
                     windowfirst = (windowfirst + i) % WINDOWSIZE;
                     windowcount -= i;
+                    stoptimer(A);
+                    if (windowcount > 0)
+                        starttimer(A, RTT);
                 }
-
-                /* start timer again if there are still more unacked packets in window */
-                stoptimer(A);
-                if (windowcount > 0)
-                    starttimer(A, RTT);
             }
           }
         }
@@ -221,30 +221,36 @@ void B_input(struct pkt packet)
   struct pkt sendpkt;
   int i;
   int windowidx;
+  int in_window;
 
   /* printf("-----B: packet seq %d %d\n", packet.seqnum, expectedseqnum); */
+  in_window = 0;
+  for (i=expectedseqnum-WINDOWSIZE; i<=expectedseqnum+WINDOWSIZE-1;i++) {
+    int seq_no = i;
+    if (i < 0) {
+        seq_no = SEQSPACE + i;
+    } else if (i >= SEQSPACE) {
+        seq_no = i % SEQSPACE;
+    }
+    if (seq_no == packet.seqnum) {
+        in_window = 1;
+        break;
+    }
+  }
 
   /* if not corrupted and received packet is in WINDOWS */
-  if (!IsCorrupted(packet)) {
+  if (!IsCorrupted(packet) && in_window) {
     if (TRACE > 0)
       printf("----B: packet %d is correctly received, send ACK!\n",packet.seqnum);
     packets_received++;
 
-    for (i = 0; i < WINDOWSIZE; i++) {
-        if (B_buffer[i].checksum == packet.checksum) {
-            break;
-        }
-    }
-    /* printf("window index %d\n", windowidx); */
-    if (i >= WINDOWSIZE) {
-        if (packet.seqnum >= expectedseqnum) {
-            windowidx = (B_windowfirst + packet.seqnum - expectedseqnum)%WINDOWSIZE;
-        } else {
-            windowidx = (B_windowfirst + SEQSPACE - expectedseqnum + packet.seqnum)%WINDOWSIZE;
-        }
+    windowidx = (B_windowfirst + packet.seqnum - expectedseqnum)%WINDOWSIZE;
 
+    if (!B_recv[windowidx]) {
+        /* printf("window index %d\n", windowidx); */
         B_buffer[windowidx] = packet;
         B_recv[windowidx] = 1;
+
         while (B_recv[B_windowfirst]) {
             /* deliver to receiving application */
             tolayer5(B, B_buffer[B_windowfirst].payload);
@@ -256,7 +262,6 @@ void B_input(struct pkt packet)
 
             B_windowfirst = (B_windowfirst + 1) % WINDOWSIZE;
         }
-
     }
     /* send an ACK for the received packet */
     sendpkt.acknum = packet.seqnum;
@@ -290,6 +295,11 @@ void B_input(struct pkt packet)
 /* entity B routines are called. You can use it to do any initialization */
 void B_init(void)
 {
+  int i;
+  for (i = 0; i < WINDOWSIZE; i++) {
+    B_recv[i] = 0;
+  }
+
   B_windowfirst = 0;
 
   expectedseqnum = 0;
